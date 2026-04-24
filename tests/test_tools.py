@@ -24,7 +24,7 @@ from assistant.modeling import (  # noqa: E402
 from assistant.retrieval import HybridRetriever  # noqa: E402
 from assistant.store import Store  # noqa: E402
 from assistant.schema import init_db  # noqa: E402
-from assistant.seed import seed_cbse, seed_ednet_sample  # noqa: E402
+from assistant.seed import seed_cbse, seed_ednet_sample, seed_extra_roster, seed_prereqs  # noqa: E402
 from assistant.tools import ToolContext, dispatch  # noqa: E402
 
 
@@ -37,6 +37,8 @@ def seeded_db(tmp_path_factory) -> Path:
     conn = init_db(db_path)
     seed_cbse(conn)
     seed_ednet_sample(conn)
+    seed_extra_roster(conn)
+    seed_prereqs(conn)
     conn.close()
     return db_path
 
@@ -147,3 +149,34 @@ def test_ednet_plan_has_recommendations(ednet_ctx):
     plan = dispatch(ednet_ctx, "plan_study_week", {"days": 7})
     assert plan["plan"]
     assert any(p.get("recommended_materials") for p in plan["plan"])
+
+
+# --- prerequisite graph ----------------------------------------------------
+
+def test_plan_surfaces_weak_prerequisites(seeded_db):
+    """Ananya is declared weak on Geometry + Trigonometry + Mensuration.
+    Geometry is a prereq for both of the others; the plan should flag it."""
+    store = Store.open("S124", db_path=seeded_db)
+    ctx = ToolContext.build(store, HybridRetriever(store.materials), today=FIXED_TODAY)
+    plan = dispatch(ctx, "plan_study_week", {"days": 7})
+
+    trig = next((p for p in plan["plan"] if p["topic"] == "Trigonometry"), None)
+    assert trig is not None, "Trigonometry should appear in Ananya's plan"
+    weak_prereqs = trig.get("weak_prerequisites", [])
+    assert any(wp["prereq_topic"] == "Geometry" for wp in weak_prereqs), (
+        f"expected Geometry flagged as weak prereq of Trigonometry, got {weak_prereqs}"
+    )
+
+
+def test_plan_skips_strong_prerequisite(seeded_db):
+    """Rhea is weak on Calculus but strong on Algebra (a Calculus prereq).
+    Algebra should NOT be flagged as a weak prereq."""
+    store = Store.open("S126", db_path=seeded_db)
+    ctx = ToolContext.build(store, HybridRetriever(store.materials), today=FIXED_TODAY)
+    plan = dispatch(ctx, "plan_study_week", {"days": 7})
+    calc = next((p for p in plan["plan"] if "Calculus" in p["topic"]), None)
+    assert calc is not None
+    for wp in calc.get("weak_prerequisites", []):
+        assert wp["prereq_topic"] != "Algebra", (
+            f"Algebra is strong for Rhea; should not be a weak prereq. Got: {wp}"
+        )

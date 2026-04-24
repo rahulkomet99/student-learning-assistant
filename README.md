@@ -7,6 +7,17 @@ upcoming tests and study-material library**, held in a real relational store.
 One FastAPI process. One SQLite file. A streaming chat UI with student switching, tool-call
 indicators, math rendering (KaTeX), citations, and an LLM-as-judge eval harness.
 
+## Demo
+
+<!-- Record a ~30s screencast walking through the 4 assignment queries + a student switch,
+     drop the mp4/gif at docs/demo.gif, and replace the placeholder line below. -->
+
+![demo](docs/demo.gif)
+
+**See [`evals/assignment_queries.md`](evals/assignment_queries.md)** for the verbatim
+captured responses to the 4 sample queries from the assignment brief — tools called,
+citations, token usage, and final streamed answers.
+
 ---
 
 ## TL;DR
@@ -14,9 +25,10 @@ indicators, math rendering (KaTeX), citations, and an LLM-as-judge eval harness.
 - **One command, one server, one browser tab.** FastAPI serves the UI + the SSE API from the same process.
 - **Real RAG:** hybrid retrieval (BM25 + TF-IDF, fused via Reciprocal Rank Fusion) with citations.
 - **Tool-augmented agent** with 4 tools (not just a prompt). Claude streams tokens and calls tools until it answers.
-- **Real relational data** — SQLite schema with students / topics / attempts / materials / tests / sessions.
+- **Real relational data** — SQLite schema with students / topics / attempts / materials / tests / sessions / topic_prerequisites.
 - **Student modelling** — weak topics are inferred dynamically from attempt history using the Wilson-lower bound; declared labels are a fallback.
-- **Works on EdNet-format data.** Bundled sample covers two TOEIC students alongside the CBSE student from the assignment. Drop real EdNet KT1 CSVs into `data/ednet_raw/` and they ingest on first boot.
+- **Curriculum-aware planning** — a prerequisite graph lets `plan_study_week` refuse to recommend a topic whose foundations are still weak (e.g. recommend Algebra before Quadratics when the student is shaky on both).
+- **Works on EdNet-format data.** Bundled sample covers three TOEIC students alongside the CBSE student from the assignment plus five more across grades 9-12 (including a JEE prep student). Drop real EdNet KT1 CSVs into `data/ednet_raw/` and they ingest on first boot.
 - **Prod hygiene:** prompt-injection defence, citation auditing, prompt caching, session logging, `/healthz`, and an eval harness.
 - **No heavy deps.** No PyTorch, no vector DB, no Node, no build step. Total install < 50 MB.
 
@@ -44,9 +56,12 @@ assistant-cli --student EN-u001           # TOEIC student REPL
 
 # Run the eval harness:
 python -m evals.run_evals
+
+# Capture the assignment's 4 sample queries into evals/assignment_queries.md:
+python -m evals.capture_assignment_responses
 ```
 
-Python 3.10+. On first run the server creates `data/db.sqlite3` and seeds it from the bundled JSON (CBSE) + the EdNet-schema sample in `data/ednet_sample/`. Delete the DB file to re-seed.
+Python 3.10+. On first run the server creates `data/db.sqlite3` and seeds it from the bundled JSON (CBSE), the EdNet-schema TOEIC sample, the extended multi-grade roster, and the topic-prerequisite graph. Delete the DB file to re-seed.
 
 ---
 
@@ -141,6 +156,14 @@ Why Wilson's lower bound? A student with 0/2 wrong isn't 0% weak — they have o
 
 This is why the same tool works against the CBSE student (with synthesised attempts consistent with his declared labels) and the EdNet students (with real-format attempt logs and no declared labels).
 
+## Curriculum awareness (prerequisite graph)
+
+`topic_prerequisites` is a small hand-curated graph: *"Quadratic Equations needs Algebra"*, *"Trigonometry needs Geometry + Algebra"*, *"JEE Electromagnetism needs JEE Mechanics"*, *"Reading - Inference needs Reading - Detail"*, and so on (~25 edges across CBSE + JEE + TOEIC).
+
+When `plan_study_week` recommends a topic, it checks the student's modelled accuracy on each prerequisite. If a prerequisite is *weaker than* the focal topic (and has enough evidence to be confident about), the tool attaches a `weak_prerequisites` list with the rationale. The agent is instructed to surface these in the answer — so a student weak at Quadratics *whose Algebra is also weak* gets told to shore up Algebra first, rather than being pushed deeper on the harder topic.
+
+Concrete example from the seeded data: Ananya's Trigonometry, Mensuration, and Coordinate Geometry are all weak, but they share a common weaker foundation (Geometry). The plan correctly surfaces Geometry as the weak prerequisite under each.
+
 ---
 
 ## Data layer
@@ -161,6 +184,7 @@ Schema:
 | `attempts` | One row per answered question — the grain modelling works over |
 | `materials` | Study library — title, content_type, difficulty, description |
 | `tests` + `test_topics` | Upcoming tests and their topic coverage |
+| `topic_prerequisites` | Hand-curated prerequisite graph: *"A needs B before A"* |
 | `sessions` + `messages` | Conversation persistence per student |
 
 ---

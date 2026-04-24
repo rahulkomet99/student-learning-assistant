@@ -214,8 +214,9 @@ def ensure_seeded(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """Open the DB and seed it from bundled JSON on first run. Idempotent."""
     conn = init_db(db_path)
     if is_empty(conn):
-        from .seed import seed_cbse, seed_ednet_sample, seed_extra_roster
+        from .seed import seed_cbse, seed_ednet_sample, seed_extra_roster, seed_prereqs
         seed_cbse(conn)          # Arjun (grade 10 CBSE, from JSON)
         seed_ednet_sample(conn)  # Priya / Kenji / Mei (TOEIC prep, EdNet-schema)
         seed_extra_roster(conn)  # Ananya / Vikram / Rhea / Aarav / Neha
+        seed_prereqs(conn)       # topic prerequisite graph
     return conn

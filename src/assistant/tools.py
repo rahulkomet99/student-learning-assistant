@@ -26,6 +26,7 @@ from .modeling import (
     rank_strong_topics,
     rank_weak_topics,
     signal_to_dict,
+    weak_prerequisites_for,
 )
 from .retrieval import HybridRetriever
 
@@ -103,9 +104,12 @@ TOOL_SCHEMAS: list[dict] = [
             "Generate a day-by-day study plan for the next `days` days (default 7) "
             "that balances the student's weak topics against the urgency of their "
             "upcoming tests, respecting their daily_study_time_minutes budget. "
-            "Returns a prioritised plan with time allocations and recommended "
-            "materials per topic. Use this for 'what should I study this week' "
-            "style queries."
+            "Returns a prioritised plan with time allocations, recommended "
+            "materials per topic, AND a `weak_prerequisites` list per topic when "
+            "the student is weaker on a foundation than on the topic itself — "
+            "surface those prerequisites in your answer so the student shores up "
+            "fundamentals before moving on. Use this for 'what should I study "
+            "this week / how do I prepare' style queries."
         ),
         "input_schema": {
             "type": "object",
@@ -253,6 +257,7 @@ def handle_plan_study_week(ctx: ToolContext, inputs: dict) -> dict:
     # to declared labels if there are no attempt rows yet. Each entry carries
     # an effective score% used by the priority blender below.
     weak_entries: list[tuple[str, float]] = []
+    signals: list = []
     if ctx.has_attempts_backend():
         signals = compute_topic_signals(ctx.data.conn, ctx.data.student_id)
         for s in rank_weak_topics(signals, limit=6):
@@ -310,6 +315,14 @@ def handle_plan_study_week(ctx: ToolContext, inputs: dict) -> dict:
         tp["recommended_materials"] = [
             {**hit.material.to_dict(), "rrf_score": round(hit.score, 5)} for hit in hits
         ]
+        # Prerequisite check: if the student is weak on a foundation of this
+        # topic, surface it so the agent can recommend shoring-up first.
+        if ctx.has_attempts_backend():
+            weak_pre = weak_prerequisites_for(
+                ctx.data.conn, ctx.data.student_id, tp["topic"], signals=signals,
+            )
+            if weak_pre:
+                tp["weak_prerequisites"] = weak_pre
 
     topic_priorities.sort(key=lambda r: -r["priority"])
 

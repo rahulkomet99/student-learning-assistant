@@ -101,6 +101,19 @@ CREATE TABLE IF NOT EXISTS messages (
     content     TEXT NOT NULL,
     created_at  TEXT NOT NULL
 );
+
+-- Prerequisite graph. A row (topic_id, prereq_topic_id) means the prereq
+-- should be fluent before attempting `topic_id`. Used by plan_study_week
+-- to refuse to recommend a topic when its foundations are still weak.
+CREATE TABLE IF NOT EXISTS topic_prerequisites (
+    topic_id          INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    prereq_topic_id   INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    rationale         TEXT,
+    PRIMARY KEY (topic_id, prereq_topic_id),
+    CHECK (topic_id != prereq_topic_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prereq_topic ON topic_prerequisites(topic_id);
 """
 
 

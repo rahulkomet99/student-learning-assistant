@@ -582,6 +582,89 @@ _ACC = {"strong": 0.88, "neutral": 0.65, "weak": 0.34}
 _ATTEMPTS_PER_TOPIC = 15
 
 
+# Prerequisite graph: each tuple is (topic, prereq_topic, rationale).
+# Curated by pedagogy, not exhaustive — the goal is to ensure the plan_study_week
+# tool can refuse to recommend a topic whose foundations are still weak.
+TOPIC_PREREQS: list[tuple[str, str, str]] = [
+    # CBSE Math
+    ("Quadratic Equations", "Algebra",
+     "Quadratics require fluent algebraic manipulation (factoring, distribution, substitution)."),
+    ("Algebra", "Linear Equations",
+     "Linear-equation techniques underpin rearranging algebraic expressions."),
+    ("Trigonometry", "Algebra",
+     "Trig identities are solved via algebraic manipulation."),
+    ("Trigonometry", "Geometry",
+     "Trig builds on right-triangle and angle properties."),
+    ("Coordinate Geometry", "Geometry",
+     "Coordinate geometry encodes geometric objects as equations."),
+    ("Coordinate Geometry", "Algebra",
+     "Lines, circles and distance formulae require algebraic fluency."),
+    ("Mensuration", "Geometry",
+     "Surface-area and volume formulas build on geometric reasoning."),
+    ("Calculus - Limits and Derivatives", "Algebra",
+     "Calculus constantly manipulates algebraic expressions."),
+    ("Calculus - Limits and Derivatives", "Trigonometry",
+     "Derivatives of trig functions and limits of trig ratios are core."),
+    ("Statistics and Probability", "Algebra",
+     "Probability and descriptive-stats formulas require algebra."),
+    # CBSE Science
+    ("Light - Reflection and Refraction", "Algebra",
+     "Mirror/lens formula problems reduce to algebraic substitution."),
+    ("Genetics and Heredity", "Cell Structure",
+     "Genetic inheritance is reasoned about at the cellular level."),
+    # CBSE English
+    ("English - Reading Comprehension", "English Grammar - Tenses",
+     "Tense fluency unlocks complex sentence comprehension."),
+    ("English - Reading Comprehension", "English Grammar - Articles",
+     "Articles affect meaning precision in passages."),
+    # CBSE History — chronology
+    ("Civil Disobedience Movement", "Rise of Nationalism in Europe",
+     "Nationalist ideas from Europe preceded Indian civil-disobedience."),
+    ("World Wars and Their Impact", "Rise of Nationalism in Europe",
+     "Nationalism is a primary cause of WW1 and WW2."),
+    # JEE
+    ("JEE Physics - Mechanics", "Algebra",
+     "Mechanics problems reduce to simultaneous equations."),
+    ("JEE Physics - Mechanics", "Trigonometry",
+     "Vector resolution and projectile motion rely on trig."),
+    ("JEE Physics - Electromagnetism", "JEE Physics - Mechanics",
+     "EM forces are reasoned about in the Newtonian framework."),
+    ("JEE Physics - Modern Physics", "JEE Physics - Mechanics",
+     "Energy and momentum concepts transfer directly."),
+    ("JEE Chemistry - Organic", "JEE Chemistry - Inorganic",
+     "Mechanisms require understanding of electronic structure and bonding."),
+    ("JEE Chemistry - Physical", "Algebra",
+     "Thermodynamics and equilibrium problems are algebraic."),
+    # TOEIC
+    ("Reading - Inference Questions", "Reading - Detail Questions",
+     "Inference requires fluent detail extraction first."),
+    ("Vocabulary - Business Idioms", "Vocabulary - Academic Words",
+     "Business idioms assume a baseline academic lexicon."),
+    ("Grammar - Conditionals", "Grammar - Tense Consistency",
+     "Conditionals compose multiple tenses; tense fluency is foundational."),
+]
+
+
+def seed_prereqs(conn: sqlite3.Connection) -> None:
+    """Populate the topic_prerequisites graph. Idempotent (INSERT OR IGNORE).
+    Topics that don't exist yet are created so the graph stays consistent even
+    if a topic is referenced before it's seeded elsewhere.
+    """
+    for topic, prereq, rationale in TOPIC_PREREQS:
+        topic_id = _upsert_topic(conn, topic, None)
+        prereq_id = _upsert_topic(conn, prereq, None)
+        if topic_id == prereq_id:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO topic_prerequisites(topic_id, prereq_topic_id, rationale)
+            VALUES(?,?,?)
+            """,
+            (topic_id, prereq_id, rationale),
+        )
+    conn.commit()
+
+
 def seed_extra_roster(conn: sqlite3.Connection) -> None:
     """Insert the extended CBSE + JEE roster straight into SQLite."""
     # Ensure every extra topic has an id.

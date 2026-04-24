@@ -184,3 +184,56 @@ def signal_to_dict(s: TopicSignal) -> dict:
         "accuracy_lower_bound_percentage": round(s.accuracy_lower * 100, 1),
         "declared_label": s.label,
     }
+
+
+def weak_prerequisites_for(
+    conn: sqlite3.Connection,
+    student_id: str,
+    topic: str,
+    signals: list[TopicSignal] | None = None,
+) -> list[dict]:
+    """Return prerequisite topics that are themselves weaker than the focal
+    topic — the student should shore these up first.
+
+    Uses the same Wilson-lower signal as `rank_weak_topics`; a prereq is
+    flagged when the student has enough evidence on it (attempts >=
+    MIN_ATTEMPTS_FOR_MODEL) and its lower-bound accuracy is below
+    WEAK_ACC_LOWER.
+    """
+    if signals is None:
+        signals = compute_topic_signals(conn, student_id)
+    signal_by_topic = {s.topic: s for s in signals}
+    target = signal_by_topic.get(topic)
+    target_acc = target.accuracy_lower if target else 0.0
+
+    rows = conn.execute(
+        """
+        SELECT t_pre.name AS prereq_topic, tp.rationale
+        FROM topic_prerequisites tp
+        JOIN topics t      ON t.id = tp.topic_id
+        JOIN topics t_pre  ON t_pre.id = tp.prereq_topic_id
+        WHERE t.name = ?
+        """,
+        (topic,),
+    ).fetchall()
+
+    flagged: list[dict] = []
+    for r in rows:
+        prereq_topic = r["prereq_topic"]
+        sig = signal_by_topic.get(prereq_topic)
+        # Only flag prereqs we have evidence on, or ones explicitly declared weak.
+        if sig is None:
+            continue
+        prereq_is_weak = (
+            (sig.attempts >= MIN_ATTEMPTS_FOR_MODEL and sig.accuracy_lower < WEAK_ACC_LOWER)
+            or sig.label == "weak"
+        )
+        # Worth flagging if the prereq is weak AND weaker than the focal topic
+        # (shoring up the prereq is the higher-value move).
+        if prereq_is_weak and sig.accuracy_lower <= target_acc + 0.05:
+            flagged.append({
+                "prereq_topic": prereq_topic,
+                "prereq_accuracy_lower_percentage": round(sig.accuracy_lower * 100, 1),
+                "rationale": r["rationale"],
+            })
+    return flagged
