@@ -1,0 +1,27 @@
+[project]
+name = "student-learning-assistant"
+version = "0.1.0"
+description = "AI-powered study assistant that helps a student decide what to learn next based on their profile, performance, upcoming tests, and study materials."
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.39.0",
+    "numpy>=1.26.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+assistant-cli = "assistant.cli:main"
+assistant-server = "assistant.server:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+assistant = ["static/*.html", "static/*.css", "static/*.js"]

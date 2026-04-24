@@ -1,0 +1,112 @@
+{
+  "materials": [
+    {
+      "material_id": "M101",
+      "topic": "Algebra",
+      "title": "Algebra Basics Revision Notes",
+      "content_type": "notes",
+      "difficulty": "beginner",
+      "estimated_minutes": 25,
+      "description": "Foundational revision notes covering variables, expressions, and simple equation manipulation. Best for refreshing core algebraic identities before moving to harder problems."
+    },
+    {
+      "material_id": "M102",
+      "topic": "Algebra",
+      "title": "Algebra Problem Set - Factorization & Identities",
+      "content_type": "practice",
+      "difficulty": "intermediate",
+      "estimated_minutes": 45,
+      "description": "Practice problems on factorization, algebraic identities like (a+b)^2, and rearranging expressions. Includes worked solutions."
+    },
+    {
+      "material_id": "M103",
+      "topic": "Quadratic Equations",
+      "title": "Quadratic Equations Concept Video",
+      "content_type": "video",
+      "difficulty": "intermediate",
+      "estimated_minutes": 20,
+      "description": "Video explainer covering the quadratic formula, discriminant, and graphical interpretation of roots."
+    },
+    {
+      "material_id": "M104",
+      "topic": "Quadratic Equations",
+      "title": "Solving Quadratics by Factoring - Worked Examples",
+      "content_type": "notes",
+      "difficulty": "beginner",
+      "estimated_minutes": 30,
+      "description": "Step-by-step worked examples on solving quadratics by factoring, completing the square, and using the quadratic formula."
+    },
+    {
+      "material_id": "M105",
+      "topic": "Light - Reflection and Refraction",
+      "title": "Ray Diagrams Explained",
+      "content_type": "video",
+      "difficulty": "intermediate",
+      "estimated_minutes": 22,
+      "description": "Visual walkthrough of ray diagrams for concave and convex mirrors and lenses. Covers sign conventions and image formation rules."
+    },
+    {
+      "material_id": "M106",
+      "topic": "Light - Reflection and Refraction",
+      "title": "Mirror and Lens Formula Practice",
+      "content_type": "practice",
+      "difficulty": "intermediate",
+      "estimated_minutes": 40,
+      "description": "Practice problems applying the mirror formula and lens formula, with magnification calculations and sign convention drills."
+    },
+    {
+      "material_id": "M107",
+      "topic": "Linear Equations",
+      "title": "Linear Equations in Two Variables - Quick Review",
+      "content_type": "notes",
+      "difficulty": "beginner",
+      "estimated_minutes": 15,
+      "description": "Quick refresher on graphing linear equations, substitution, and elimination methods for simultaneous equations."
+    },
+    {
+      "material_id": "M108",
+      "topic": "Chemical Reactions",
+      "title": "Balancing Chemical Equations Drill",
+      "content_type": "practice",
+      "difficulty": "beginner",
+      "estimated_minutes": 20,
+      "description": "Drill of balancing chemical equations across common reaction types: combination, decomposition, displacement, redox."
+    },
+    {
+      "material_id": "M109",
+      "topic": "Electricity",
+      "title": "Ohm's Law and Circuit Basics",
+      "content_type": "video",
+      "difficulty": "beginner",
+      "estimated_minutes": 18,
+      "description": "Introduction to Ohm's law, series and parallel circuits, and basic power calculations."
+    },
+    {
+      "material_id": "M110",
+      "topic": "Algebra",
+      "title": "Algebra Speed Round - Timed Mock",
+      "content_type": "practice",
+      "difficulty": "advanced",
+      "estimated_minutes": 30,
+      "description": "Timed mock paper with mixed algebra problems under exam conditions. Targets speed and accuracy for test prep."
+    },
+    {
+      "material_id": "M111",
+      "topic": "Quadratic Equations",
+      "title": "Word Problems Using Quadratic Equations",
+      "content_type": "practice",
+      "difficulty": "intermediate",
+      "estimated_minutes": 35,
+      "description": "Applied word problems translating real-world scenarios into quadratic equations: area, speed-distance, number relations."
+    },
+    {
+      "material_id": "M112",
+      "topic": "Light - Reflection and Refraction",
+      "title": "Refractive Index and Snell's Law - Concept Notes",
+      "content_type": "notes",
+      "difficulty": "beginner",
+      "estimated_minutes": 20,
+      "description": "Conceptual notes on refractive index, Snell's law, and total internal reflection with day-to-day examples."
+    }
+  ]
+}

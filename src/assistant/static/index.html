@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Learning Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">◆</div>
+      <div class="brand-title">Study Coach</div>
+    </div>
+
+    <label class="student-switcher">
+      <span class="switcher-label">Student</span>
+      <select id="student-select"></select>
+    </label>
+
+    <div class="student-card" id="student-card">
+      <div class="card-loading">Loading student…</div>
+    </div>
+
+    <button id="reset-btn" class="ghost-btn">+ New conversation</button>
+
+    <div class="sidebar-foot">Grounded in profile, performance, tests &amp; study library.</div>
+  </aside>
+
+  <main class="chat">
+    <div class="messages" id="messages">
+      <div class="empty" id="empty">
+        <div class="empty-icon">◆</div>
+        <h1 class="empty-title" id="empty-title">Hi — what shall we work on?</h1>
+        <p class="empty-sub">I'll ground every answer in your profile, performance, upcoming tests and study library.</p>
+        <div class="empty-suggestions" id="empty-suggestions"></div>
+      </div>
+    </div>
+
+    <form class="composer" id="composer">
+      <div class="composer-inner">
+        <textarea
+          id="input"
+          rows="1"
+          placeholder="Ask about what to study, weak areas, or test prep…"
+          autocomplete="off"
+        ></textarea>
+        <button type="submit" id="send" aria-label="Send">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2 8L14 2L9 14L7 9L2 8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </form>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

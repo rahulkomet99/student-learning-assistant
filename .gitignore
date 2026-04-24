@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+traces/*.jsonl
+!traces/.gitkeep
+.pytest_cache/
+.DS_Store
+# SQLite DB is auto-seeded on first boot; no need to commit it.
+data/db.sqlite3
+data/db.sqlite3-shm
+data/db.sqlite3-wal
+# Real EdNet data is license-gated — don't accidentally commit it.
+data/ednet_raw/

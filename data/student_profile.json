@@ -1,0 +1,10 @@
+{
+  "student_id": "S123",
+  "name": "Arjun",
+  "grade": 10,
+  "board": "CBSE",
+  "target_exam": "School Exams",
+  "daily_study_time_minutes": 90,
+  "strong_topics": ["Linear Equations", "Chemical Reactions"],
+  "weak_topics": ["Algebra", "Quadratic Equations", "Light - Reflection and Refraction"]
+}

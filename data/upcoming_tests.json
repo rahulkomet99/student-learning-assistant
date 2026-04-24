@@ -1,0 +1,26 @@
+{
+  "student_id": "S123",
+  "upcoming_tests": [
+    {
+      "test_id": "T201",
+      "subject": "Mathematics",
+      "test_name": "Math Weekly Test",
+      "date": "2026-04-29",
+      "topics": ["Algebra", "Quadratic Equations"]
+    },
+    {
+      "test_id": "T202",
+      "subject": "Science",
+      "test_name": "Physics Chapter Test",
+      "date": "2026-05-06",
+      "topics": ["Light - Reflection and Refraction"]
+    },
+    {
+      "test_id": "T203",
+      "subject": "Mathematics",
+      "test_name": "Math Monthly Assessment",
+      "date": "2026-05-20",
+      "topics": ["Algebra", "Quadratic Equations", "Linear Equations"]
+    }
+  ]
+}

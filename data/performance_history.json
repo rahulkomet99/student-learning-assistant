@@ -1,0 +1,15 @@
+{
+  "student_id": "S123",
+  "subject_performance": [
+    {"subject": "Mathematics", "overall_score_percentage": 52},
+    {"subject": "Science", "overall_score_percentage": 63}
+  ],
+  "topic_performance": [
+    {"topic": "Algebra", "subject": "Mathematics", "score_percentage": 42, "last_assessed": "2026-04-10"},
+    {"topic": "Quadratic Equations", "subject": "Mathematics", "score_percentage": 38, "last_assessed": "2026-04-12"},
+    {"topic": "Linear Equations", "subject": "Mathematics", "score_percentage": 78, "last_assessed": "2026-04-08"},
+    {"topic": "Light - Reflection and Refraction", "subject": "Science", "score_percentage": 48, "last_assessed": "2026-04-15"},
+    {"topic": "Chemical Reactions", "subject": "Science", "score_percentage": 82, "last_assessed": "2026-04-05"},
+    {"topic": "Electricity", "subject": "Science", "score_percentage": 60, "last_assessed": "2026-04-18"}
+  ]
+}
