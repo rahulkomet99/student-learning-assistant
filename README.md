@@ -171,10 +171,22 @@ python -m evals.capture_assignment_responses     # capture the 4 assignment quer
 
 ## Next improvements
 
-1. Auth + per-student isolation at the Store layer.
-2. Spaced-repetition scheduling inside `plan_study_week` (SM-2-style revisits).
-3. Haiku routing for simple queries; Sonnet/Opus for composite planning.
-4. Retry + timeout middleware on the Anthropic client.
-5. OpenTelemetry spans around each tool call + agent turn.
-6. Grow the eval set to ~50 cases with per-criterion histograms.
-7. Structured citation output via Claude's JSON mode so the UI renders authoritatively.
+### Pedagogy — closing the learning loop
+
+The current tools cover **acquisition** (what to study, where to find it). A real tutor also needs **practice** and **retention**:
+
+- **`schedule_revision`** — SM-2 / FSRS spaced repetition over the `attempts` table. Due-today / due-this-week surfaces so the student revisits recently-learned material at expanding intervals, not just new topics.
+- **`generate_practice_question`** — *"quiz me on Quadratics"* → N MCQs at the student's current difficulty. The single most-used tool in real study apps; distinguishes a coach from a search layer.
+- **`explain_concept`** — grade-aware explanations (*"the discriminant, for a grade-10 CBSE student"*) with examples drawn from the student's actual weak areas.
+- **`evaluate_answer`** + **`explain_mistake`** — student submits their work, agent grades it, identifies the misconception. Closes the practice loop; the difference between a study guide and a tutor.
+- **`track_progress`** — *"how am I doing on Algebra vs. last month?"* — trend rollups over the `attempts` table for motivation and parent/teacher reports.
+- **`get_prerequisites`** as a standalone tool — the graph already exists and feeds `plan_study_week`; exposing it directly lets the student ask *"what do I need before Calculus?"*.
+
+### Infra / ops
+
+1. Auth + per-student isolation enforced at the Store layer, not just the UI.
+2. Haiku routing for simple lookups; Opus only when the agent actually needs composite reasoning. Cuts cost ~10×.
+3. Retry + timeout middleware on the Anthropic client.
+4. OpenTelemetry spans around each tool call + agent turn.
+5. Grow the eval set to ~50 cases with per-criterion histograms; nightly judge runs.
+6. Structured citation output via Claude's JSON mode so the UI renders citations authoritatively instead of regex-matching `[M###]`.
