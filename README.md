@@ -1,305 +1,180 @@
 # Student Learning Assistant
 
-An AI study coach that answers a student's questions like "what should I study this week?" or
-"I'm weak in Algebra, what next?" — grounded in their **actual profile, attempt-level performance,
-upcoming tests and study-material library**, held in a real relational store.
+[![tests](https://github.com/rahulkomet99/student-learning-assistant/actions/workflows/test.yml/badge.svg)](https://github.com/rahulkomet99/student-learning-assistant/actions/workflows/test.yml)
 
-One FastAPI process. One SQLite file. A streaming chat UI with student switching, tool-call
-indicators, math rendering (KaTeX), citations, and an LLM-as-judge eval harness.
+An AI study coach that answers a student's questions — *"what should I study this week?"*, *"I'm weak in Algebra, what next?"* — grounded in their profile, attempt-level performance, upcoming tests, and study library.
+
+One FastAPI process. One SQLite file. Streaming chat UI with math rendering, citations, and an LLM-as-judge eval harness.
 
 ## Demo
 
-<!-- Record a ~30s screencast walking through the 4 assignment queries + a student switch,
-     drop the mp4/gif at docs/demo.gif, and replace the placeholder line below. -->
-
+<!-- Record a ~30s screencast and drop it at docs/demo.gif -->
 ![demo](docs/demo.gif)
 
-**See [`evals/assignment_queries.md`](evals/assignment_queries.md)** for the verbatim
-captured responses to the 4 sample queries from the assignment brief — tools called,
-citations, token usage, and final streamed answers.
+Live captures of the assignment's 4 sample queries (tools called, citations, final answers) → [`evals/assignment_queries.md`](evals/assignment_queries.md).
 
----
+## What the brief asked for — and where to look
 
-## TL;DR
+The assignment asks for four things. All four are present; this section tells you where.
 
-- **One command, one server, one browser tab.** FastAPI serves the UI + the SSE API from the same process.
-- **Real RAG:** hybrid retrieval (BM25 + TF-IDF, fused via Reciprocal Rank Fusion) with citations.
-- **Tool-augmented agent** with 4 tools (not just a prompt). Claude streams tokens and calls tools until it answers.
-- **Real relational data** — SQLite schema with students / topics / attempts / materials / tests / sessions / topic_prerequisites.
-- **Student modelling** — weak topics are inferred dynamically from attempt history using the Wilson-lower bound; declared labels are a fallback.
-- **Curriculum-aware planning** — a prerequisite graph lets `plan_study_week` refuse to recommend a topic whose foundations are still weak (e.g. recommend Algebra before Quadratics when the student is shaky on both).
-- **Works on EdNet-format data.** Bundled sample covers three TOEIC students alongside the CBSE student from the assignment plus five more across grades 9-12 (including a JEE prep student). Drop real EdNet KT1 CSVs into `data/ednet_raw/` and they ingest on first boot.
-- **Prod hygiene:** prompt-injection defence, citation auditing, prompt caching, session logging, `/healthz`, and an eval harness.
-- **No heavy deps.** No PyTorch, no vector DB, no Node, no build step. Total install < 50 MB.
+| Requirement | Where it lives |
+|---|---|
+| **Retrieval** (embeddings / semantic search or structured filtering) | Both. Hybrid BM25 + TF-IDF with RRF fusion in [`retrieval.py`](src/assistant/retrieval.py); structured SQL filtering in [`tools.py`](src/assistant/tools.py). |
+| **Tool usage** (at least one of `get_weak_topics`, `get_upcoming_tests`, `recommend_study_material`) | All four, plus `plan_study_week` as a composer — see [`tools.py`](src/assistant/tools.py). |
+| **Context-aware responses** | Each tool reads a specific student's profile, performance, and tests from SQLite; the system prompt also pins a per-student snapshot with prompt caching — see [`agent.py`](src/assistant/agent.py). |
+| **Simple API / CLI / UI** | FastAPI SSE API + a minimal chat UI + a CLI REPL, one uvicorn process — see [`server.py`](src/assistant/server.py) and [`cli.py`](src/assistant/cli.py). |
 
----
+Everything beyond that list — multi-student store, Wilson-lower modelling, prereq graph, guardrails, evals, CI — is ***intentional over-scope*** to show architectural reasoning. If you want to verify just the brief, run `python -m evals.capture_assignment_responses` and read the generated markdown.
 
 ## Setup
 
 ```bash
-cd student-learning-assistant
-
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
+cp .env.example .env      # add ANTHROPIC_API_KEY
 
-cp .env.example .env
-# set ANTHROPIC_API_KEY=sk-ant-...
-
-# Run the server + UI:
-assistant-server
-# open http://localhost:8000
-
-# Or use the CLI:
-assistant-cli --list                     # see all students
-assistant-cli --student S123 -q "What should I study this week?" --trace
-assistant-cli --student EN-u001           # TOEIC student REPL
-
-# Run the eval harness:
-python -m evals.run_evals
-
-# Capture the assignment's 4 sample queries into evals/assignment_queries.md:
-python -m evals.capture_assignment_responses
+assistant-server          # open http://localhost:8000
+assistant-cli --list      # list seeded students
+assistant-cli -q "What should I study this week?" --trace
 ```
 
-Python 3.10+. On first run the server creates `data/db.sqlite3` and seeds it from the bundled JSON (CBSE), the EdNet-schema TOEIC sample, the extended multi-grade roster, and the topic-prerequisite graph. Delete the DB file to re-seed.
+First boot creates `data/db.sqlite3` and seeds 9 students (CBSE, JEE, TOEIC) + ~30 topics + prereq graph + study materials. Delete the DB to re-seed.
 
----
+## What's in it
+
+- **Tool-using agent** (Claude Opus 4.7) with 4 tools: `get_weak_topics`, `get_upcoming_tests`, `recommend_study_material`, `plan_study_week`.
+- **Hybrid retrieval**: BM25 + TF-IDF fused via Reciprocal Rank Fusion, in-house numpy (no PyTorch).
+- **Dynamic student modelling**: weakness ranked by Wilson lower-bound over recent attempts, falling back to declared labels.
+- **Curriculum-aware planning**: a topic-prerequisite graph lets the planner refuse to recommend Quadratics when Algebra is still weak.
+- **Streaming SSE + async agent loop**: tokens flush token-by-token; tool calls render as inline status lines.
+- **Markdown rendering** via `marked` + `DOMPurify`, with custom extensions for citation pills (`[M103]`) and KaTeX math (`$...$`, `$$...$$`).
+- **Guardrails**: prompt-injection defence (user input XML-tagged), citation audit in the trace log.
+- **Prompt caching** on the system prompt + per-student snapshot.
+- **Eval harness** with golden queries + LLM-as-judge rubric scoring.
+- **9 seeded students** across grades 9–12 (CBSE school + JEE prep) and TOEIC prep.
+- **Chat UX**: student switcher, subject-aware suggestions, copy/regenerate/stop on every response, pill composer.
+
+No PyTorch, no vector DB, no Node, no build step. Install size < 50 MB.
 
 ## Architecture
 
 ```
                     ┌──────────────────────────────────────────┐
   browser chat UI   │  index.html + styles.css + app.js         │
-  ─── SSE /api/chat │  KaTeX-rendered math · tool chips ·        │
-                    │  citation pills · student switcher         │
+  ──── SSE chat ────│  marked + DOMPurify + KaTeX               │
+                    │  student switcher · copy · regenerate     │
                     └──────────────────┬───────────────────────┘
                                        │
                      ┌─────────────────▼────────────────────────┐
                      │  FastAPI (server.py)                      │
-                     │   POST /api/chat      SSE stream          │
-                     │   GET  /api/students  switcher data       │
-                     │   GET  /api/student   snapshot            │
+                     │   POST /api/chat       SSE stream         │
+                     │   GET  /api/students   switcher data      │
+                     │   GET  /api/student    snapshot           │
                      │   GET  /healthz                          │
                      └─────────────────┬────────────────────────┘
                                        │
                    ┌───────────────────▼───────────────────────┐
                    │  Agent (agent.py)                          │
-                   │   - AsyncAnthropic streaming (async gen)   │
-                   │   - Prompt caching on system + snapshot    │
-                   │   - User content wrapped in <user_message> │
-                   │   - Citation audit post-generation         │
-                   │   - JSONL trace per session                │
+                   │   AsyncAnthropic streaming (async gen)     │
+                   │   Prompt caching · citation audit          │
+                   │   User content wrapped <user_message>…     │
+                   │   Trace JSONL per session                  │
                    └──┬──────────────────────────────────┬─────┘
                       │                                  │
        ┌──────────────▼──────────┐       ┌───────────────▼──────────┐
-       │  tools.py (4 tools)     │       │  retrieval.py            │
+       │  tools.py (4 tools)     │──────▶│  retrieval.py            │
        │   get_weak_topics       │       │   HybridRetriever         │
-       │   get_upcoming_tests    │──────▶│    BM25 Okapi             │
+       │   get_upcoming_tests    │       │    BM25 Okapi             │
        │   recommend_study_mat.  │       │    TF-IDF + cosine        │
        │   plan_study_week       │       │    RRF fusion             │
        └──┬──────────────────────┘       └──────────────────────────┘
-          │
-          │   modelling                store                seed
-          ▼                            ▼                    ▼
-  ┌────────────────────┐     ┌──────────────────┐   ┌──────────────────┐
-  │ modeling.py        │     │ store.py         │   │ seed.py          │
-  │ compute_signals()  │     │ Store.open(sid)  │   │ seed_cbse()      │
-  │ rank_weak/strong() │◀────│ reads SQLite     │◀──│ seed_ednet(...)  │
-  │ Wilson-lower bound │     │ aggregates attmpts│   │ generates sample │
-  └────────────────────┘     └────────┬─────────┘   └──────────────────┘
-                                      │
-                      ┌───────────────▼────────────────┐
-                      │  SQLite (schema.py)            │
-                      │    students  · topics          │
-                      │    attempts  · materials       │
-                      │    tests     · test_topics     │
-                      │    sessions  · messages        │
-                      └────────────────────────────────┘
+          │         modelling               store            seed
+          ▼           ▼                      ▼                 ▼
+       ┌────────────────────┐     ┌──────────────────┐   ┌──────────────────┐
+       │ modeling.py        │     │ store.py         │   │ seed.py          │
+       │ Wilson-lower rank  │◀────│ Store.open(sid)  │◀──│ seed_cbse()      │
+       │ weak_prereqs_for() │     │ aggregates attmpts│   │ seed_ednet()     │
+       └────────────────────┘     └────────┬─────────┘   │ seed_extra()     │
+                                           │             │ seed_prereqs()   │
+                                  ┌────────▼──────────┐  └──────────────────┘
+                                  │ SQLite schema     │
+                                  │  students         │
+                                  │  topics + prereqs │
+                                  │  attempts         │
+                                  │  materials        │
+                                  │  tests            │
+                                  │  sessions + msgs  │
+                                  └───────────────────┘
 ```
 
----
+## Key decisions
 
-## How a query flows through the system
-
-Example: **"What should I study this week?"** as Priya (TOEIC prep).
-
-1. **UI → API.** Browser POSTs `{message, history, student_id: "EN-u001"}` to `/api/chat`. Server opens an SSE stream.
-2. **Agent run.** The user's message is wrapped in `<user_message>` and placed after a cached system prompt that includes Priya's full profile snapshot. Four tool schemas are exposed.
-3. **Claude picks tools.** For a weekly-plan question it calls `plan_study_week` (which itself composes `get_weak_topics` + `get_upcoming_tests` internally).
-4. **Tools execute locally against SQLite.** `plan_study_week`:
-   - Pulls Priya's weak topics from the **modelling layer** — Wilson-lower-bound of recent accuracy on the `attempts` table. Priya comes out weak on "Vocabulary - Business Idioms" (8%) and "Reading - Inference Questions" (19%).
-   - Computes test urgency for the TOEIC mock in 6 days.
-   - Scores each topic `priority = weakness × (1 + 2·urgency)`.
-   - Allocates Priya's 60-minute daily budget proportionally, rounded to 5-min blocks.
-   - Attaches the top-retrieved material per topic (hybrid BM25 + TF-IDF, filtered by topic).
-5. **UI shows tool chips in real time** (`Looking up upcoming tests…` → `Fetched upcoming tests (1)`).
-6. **Final text streams token-by-token.** Math expressions render as KaTeX. Citations like `[M204]` render as pills with hover tooltips showing the material title + topic.
-7. **Session logged** to SQLite (`sessions` + `messages` tables) and to `traces/<timestamp>.jsonl`. If the model returned material_ids but didn't cite them, a `guardrail_warning` event lands in the trace.
-
----
+- **SQLite, not JSON** — real relational store; bundled JSON (CBSE) and EdNet-style synthetic data both seed into it on first boot. Drop real EdNet KT1 CSVs into `data/ednet_raw/` and they override the sample.
+- **Async everywhere on the server path** — `AsyncAnthropic` + async generator so SSE deltas actually flush. The sync agent is kept for the CLI.
+- **Hybrid BM25 + TF-IDF** — dropped `sentence-transformers` (pulls ~500 MB of torch) for a ~30-line numpy TF-IDF. At this corpus size, recall is indistinguishable; upgrade path is a one-class swap behind `HybridRetriever`.
+- **4 composable tools** — kept small and independent so the agent's tool trace is itself a debugging artifact. `plan_study_week` is the higher-level composer.
+- **Wilson-lower, not raw accuracy** — a student with 2 / 3 correct is not 66 % strong. Conservative estimates tighten as evidence accumulates.
+- **Prerequisite graph** — ~25 hand-curated edges across CBSE / JEE / TOEIC. A topic's weak prereqs get attached to its plan entry so the agent can recommend shoring up fundamentals first.
+- **Prompt-injection defence at the agent layer** — every user turn is wrapped in `<user_message>…</user_message>`. The system prompt treats that content as data.
+- **Marked + DOMPurify for rendering**, with custom extensions for citations and math — `renderMarkdown` is effectively one line.
+- **Judge model ≠ agent model** — agent runs on Opus 4.7; the LLM-as-judge runs on Haiku 4.5 to reduce same-family scoring bias.
 
 ## Student modelling
 
-The original JSON profile had a static `weak_topics` list. That doesn't survive contact with real data, where weakness is a rolling function of recent accuracy.
-
 ```
 For each student × topic:
-    take up to N most recent attempts (default N=30)
-    acc_mean  = correct / total                      # simple average
-    acc_lower = Wilson(correct, total, z=1.96)       # lower 95% CI bound
+    up to N = 30 most recent attempts
+    acc_lower = Wilson(correct, total, z = 1.96)
 
-Rank weak-first by acc_lower when attempts ≥ 5; otherwise fall back to the
-student's declared 'weak' / 'strong' labels.
+Rank weak-first by acc_lower when attempts ≥ 5;
+otherwise fall back to declared 'weak'/'strong' labels.
 ```
 
-Why Wilson's lower bound? A student with 0/2 wrong isn't 0% weak — they have one data point. Wilson gives us a conservative estimate that tightens as evidence accumulates. 15/15 correct reads as ~80% lower-bound, not 100%.
-
-This is why the same tool works against the CBSE student (with synthesised attempts consistent with his declared labels) and the EdNet students (with real-format attempt logs and no declared labels).
-
-## Curriculum awareness (prerequisite graph)
-
-`topic_prerequisites` is a small hand-curated graph: *"Quadratic Equations needs Algebra"*, *"Trigonometry needs Geometry + Algebra"*, *"JEE Electromagnetism needs JEE Mechanics"*, *"Reading - Inference needs Reading - Detail"*, and so on (~25 edges across CBSE + JEE + TOEIC).
-
-When `plan_study_week` recommends a topic, it checks the student's modelled accuracy on each prerequisite. If a prerequisite is *weaker than* the focal topic (and has enough evidence to be confident about), the tool attaches a `weak_prerequisites` list with the rationale. The agent is instructed to surface these in the answer — so a student weak at Quadratics *whose Algebra is also weak* gets told to shore up Algebra first, rather than being pushed deeper on the harder topic.
-
-Concrete example from the seeded data: Ananya's Trigonometry, Mensuration, and Coordinate Geometry are all weak, but they share a common weaker foundation (Geometry). The plan correctly surfaces Geometry as the weak prerequisite under each.
-
----
-
-## Data layer
-
-SQLite, single file, auto-created on first run. Seeded from:
-
-1. **Bundled CBSE JSON** (`data/student_profile.json`, etc.) — one student, Arjun, grade 10. We synthesise ~15 attempts per declared topic so the modelling layer has real data to aggregate over; accuracies (~40% weak, ~85% strong) stay consistent with the declared score numbers.
-2. **Bundled EdNet-schema sample** (`data/ednet_sample/`) — two TOEIC-prep students, 60 attempts each, two synthetic upcoming mock tests, and a practice-pack material per tag. This is structurally identical to EdNet KT1; the numbers are generated so CI runs offline.
-3. **Optional: real EdNet KT1** — drop your licensed EdNet CSVs into `data/ednet_raw/` in the layout documented in `seed.py` (`contents/questions.csv`, `contents/tags.csv`, `users/<id>.csv`, `students.csv`, `tests.csv`, `materials.csv`). They take precedence over the synthetic sample on the next cold-boot.
-
-Schema:
-
-| Table | Purpose |
-|---|---|
-| `students` | Profile — id, name, grade, board, target_exam, daily budget, `source` ('cbse' \| 'ednet' \| …) |
-| `topics` | Topic catalogue with optional subject |
-| `student_topic_label` | Declared weak/strong labels — fallback when attempts are sparse |
-| `attempts` | One row per answered question — the grain modelling works over |
-| `materials` | Study library — title, content_type, difficulty, description |
-| `tests` + `test_topics` | Upcoming tests and their topic coverage |
-| `topic_prerequisites` | Hand-curated prerequisite graph: *"A needs B before A"* |
-| `sessions` + `messages` | Conversation persistence per student |
-
----
+Example (from the seeded data): Ananya's Trigonometry, Mensuration, and Coordinate Geometry are all weak, but they share a weaker foundation (Geometry) — the plan flags Geometry as the weak prerequisite under each.
 
 ## Guardrails
 
-**Prompt-injection defence.** Every user message is wrapped in `<user_message>…</user_message>` before it reaches Claude. The system prompt explicitly instructs Claude to treat that content as data, not as instructions. Literal `</user_message>` tags in user input are neutralised so the student can't close the tag and escape.
-
-**Citation audit.** After the agent produces its final text, we check whether any tool returned `material_id` values. If yes and the response cites none of them, a structured `guardrail_warning` event with `kind: missing_citation` lands in the trace JSONL. No auto-retry (silent retries hide model behaviour from evals); the signal is visible to whoever reads the trace.
-
-**Blast-radius limits.** The agent loop is bounded by `MAX_TURNS=6`. Tool results cap at ~200 chars in SSE summaries; full payloads live in the trace.
-
----
+- **Prompt-injection defence**: user input wrapped in `<user_message>` XML tags; system prompt instructs the model to treat that content as data and to ignore any override attempts inside. Literal `</user_message>` in user text is neutralised.
+- **Citation audit**: after the agent finishes, we scan for `[M###]` tokens against the material_ids the tools returned. If anything was retrieved and nothing was cited, a `guardrail_warning` event lands in the trace JSONL. No silent retries.
+- **Bounded loop**: `MAX_TURNS = 6`. Tool results trimmed to ~200-char summaries on the SSE wire; full payloads live in the trace.
 
 ## Evals
 
-`evals/golden.jsonl` holds 8 cases. For each:
-
-1. Run the agent end-to-end; collect `(tools_called, citations, final_text)`.
-2. **Hard check:** tool expectations — e.g. "must have called `get_upcoming_tests`".
-3. **LLM-as-judge:** Claude rates the response 1-5 against a rubric of domain-specific criteria ("does it respect the 90-minute budget?", "does it pick one top priority?", etc.).
-
 ```bash
-python -m evals.run_evals                      # full run (judge included)
-python -m evals.run_evals --no-judge           # tool checks only (fast)
-python -m evals.run_evals --id algebra-weak    # one case
+python -m evals.run_evals                        # full run (LLM judge)
+python -m evals.run_evals --no-judge             # tool-coverage only
+python -m evals.capture_assignment_responses     # capture the 4 assignment queries
 ```
 
----
+`evals/golden.jsonl` has 8 cases. Each run does a hard tool-coverage check plus Claude-as-judge scoring against a domain-specific rubric (budget respected? top priority justified? citations surfaced?).
 
-## Key decisions & tradeoffs
+## Data
 
-### Hybrid TF-IDF + BM25 (no transformer embeddings)
+| Table | Purpose |
+|---|---|
+| `students` | Profile (name, grade, board, target_exam, daily budget, source) |
+| `topics` | Topic catalogue with subject |
+| `student_topic_label` | Declared weak/strong labels (fallback when attempts sparse) |
+| `attempts` | One row per answered question — the grain modelling works over |
+| `materials` | Study library (title, type, difficulty, description) |
+| `tests` + `test_topics` | Upcoming tests and their topic coverage |
+| `topic_prerequisites` | Hand-curated *"A needs B"* graph |
+| `sessions` + `messages` | Conversation persistence per student |
 
-| | sentence-transformers | TF-IDF + BM25 (chosen) |
-|---|---|---|
-| Install size | ~500 MB (pulls PyTorch) | ~30 MB |
-| First-run latency | 1-3 s to load model | < 50 ms |
-| Recall on this corpus | Marginally better | Indistinguishable |
-| Upgrade path | — | `TfidfIndex` swaps for an embedding backend; RRF stays |
+## Limitations
 
-For a ~20-document corpus, dense embeddings are overkill. Retrieval is isolated behind `HybridRetriever`, so swapping in sentence-transformers or Voyage later is ~20 lines.
+- **No auth** — student switcher goes by id; fine for a demo, not prod.
+- **Single box** — stateless agent, stateful SQLite. Scaling is a Postgres swap.
+- **No retry** on Anthropic 5xx / timeouts.
+- **Judge is still one LLM** — Haiku-on-Opus reduces family bias, but a fully rigorous harness needs human-labelled goldens or multi-vendor judging.
+- **EdNet sample is synthetic** — the real dataset is license-gated. The CSV loader is the real asset.
 
-### Async streaming, not sync
+## Next improvements
 
-The agent exposes both `run()` (sync, for the CLI) and `run_async()` (async, used by the FastAPI SSE endpoint). The first iteration used sync inside async and had tokens batch at the end — an easy trap. The fix was to use `AsyncAnthropic` throughout the server path so each text delta flushes to the socket immediately. Headers `X-Accel-Buffering: no` + `Cache-Control: no-cache, no-transform` are set on the SSE response so any upstream proxy behaves.
-
-### Prompt caching
-
-System instructions + the student snapshot are both cache-anchored (`cache_control: ephemeral`). Multi-turn sessions hit the cache instead of reprocessing profile JSON every turn. Small win on single-turn demos; real win in production.
-
-### Modelling vs declared labels
-
-The weakness signal comes from attempts when available, and falls back to declared labels when not. This means:
-- The same codepath works for real EdNet users (no declared labels, lots of attempts).
-- The CBSE student still reads sensibly on day 1 (declared labels, before any real practice is logged).
-- A student with 3 attempts isn't labelled 100% strong on a topic.
-
----
-
-## Project layout
-
-```
-student-learning-assistant/
-├── data/
-│   ├── student_profile.json         # CBSE seed (as given in the assignment)
-│   ├── performance_history.json
-│   ├── study_materials.json
-│   ├── upcoming_tests.json
-│   ├── ednet_sample/                # bundled EdNet-schema sample (2 users)
-│   ├── ednet_raw/                   # optional: drop real EdNet CSVs here
-│   └── db.sqlite3                   # auto-created; gitignored
-├── src/assistant/
-│   ├── agent.py                     # streaming + sync tool-use loop, guardrails
-│   ├── server.py                    # FastAPI app (UI + SSE /chat + student switch)
-│   ├── cli.py                       # REPL / one-shot query; respects --student
-│   ├── tools.py                     # 4 tool schemas + handlers
-│   ├── retrieval.py                 # in-house BM25 + TF-IDF + RRF
-│   ├── modeling.py                  # Wilson-lower weakness ranking
-│   ├── store.py                     # SQLite-backed data access per student
-│   ├── schema.py                    # schema DDL + init
-│   ├── seed.py                      # CBSE + EdNet seeders
-│   ├── tracing.py                   # JSONL session logger
-│   ├── data.py                      # legacy JSON loader (still used by data.Material)
-│   └── static/                      # index.html · styles.css · app.js
-├── evals/
-│   ├── golden.jsonl                 # 8 graded queries
-│   └── run_evals.py                 # harness + LLM-as-judge
-├── tests/
-│   └── test_tools.py                # 10 tests: retrieval, modelling, tools, store
-├── traces/                          # session JSONL logs (git-ignored)
-├── pyproject.toml
-└── README.md
-```
-
----
-
-## Limitations (known)
-
-- **No auth.** Student switching goes by id; anyone on the box can query any student. Next step is magic-link email login with per-student data isolation enforced at the Store layer.
-- **Single server, single box.** Stateless agent, stateful SQLite. Scaling reads is one Postgres swap away; scaling writes needs work.
-- **No retries on Anthropic errors.** 5xx or timeouts bubble to the user as `error` events. Needs exponential-backoff retry middleware.
-- **Eval judge is Claude-on-Claude.** A single-model judge is cheap but biased. A different model (or labelled human data) would be stronger.
-- **EdNet sample is generated.** Real EdNet is license-gated and not committed. The loader is the real asset — point it at licensed CSVs and it ingests on first boot.
-- **No rate limiting.** Fine for a demo, not for multi-user prod.
-
----
-
-## Next improvements (in priority order)
-
-1. **Auth + per-student isolation** enforced at the Store layer (not just at the UI).
-2. **Spaced repetition** in `plan_study_week` — interleave revisits of recently-learned topics on an SM-2 schedule.
-3. **Haiku routing.** Simple queries ("what are my weak areas") don't need Sonnet; route to Haiku 4.5 for 10× cheaper, 3× faster.
-4. **Retry + timeout middleware** around the Anthropic client.
-5. **OpenTelemetry spans** around each tool call and agent turn; wire to Jaeger for local debugging.
-6. **Eval scale + dashboard.** Grow the golden set to ~50 cases, add per-criterion score histograms, run judge as a nightly job (too slow for every PR).
-7. **Structured citation output.** Have the model emit `{"text": "...", "citations": [...]}` via Claude's structured-output APIs so the UI renders citations authoritatively instead of regex-matching.
-8. **Content chunking for direct Q&A.** Right now each material is a row; chunking actual lesson content would let the assistant answer content questions ("what is the discriminant?") directly, not just point to materials.
+1. Auth + per-student isolation at the Store layer.
+2. Spaced-repetition scheduling inside `plan_study_week` (SM-2-style revisits).
+3. Haiku routing for simple queries; Sonnet/Opus for composite planning.
+4. Retry + timeout middleware on the Anthropic client.
+5. OpenTelemetry spans around each tool call + agent turn.
+6. Grow the eval set to ~50 cases with per-criterion histograms.
+7. Structured citation output via Claude's JSON mode so the UI renders authoritatively.

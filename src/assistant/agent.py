@@ -28,7 +28,7 @@ from .retrieval import HybridRetriever
 from .tools import TOOL_SCHEMAS, ToolContext, collect_citations, dispatch
 from .tracing import TraceLogger
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-opus-4-7"
 MAX_TURNS = 6
 MAX_TOKENS = 1536
 CITATION_RE = re.compile(r"\[(M\d+)\]")
@@ -385,7 +385,7 @@ def _audit_citations(final_text: str, surfaced_ids: list[str], trace: TraceLogge
         return
     trace.log(
         "guardrail_warning",
-        kind="missing_citation",
+        reason="missing_citation",
         surfaced_ids=list(surfaced),
         cited_ids=list(cited),
         note="Tools returned material_ids but none appeared in the final answer.",

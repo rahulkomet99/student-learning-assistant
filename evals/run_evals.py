@@ -34,7 +34,9 @@ from assistant.data import load_data  # noqa: E402
 from assistant.retrieval import HybridRetriever  # noqa: E402
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden.jsonl"
-JUDGE_MODEL = "claude-sonnet-4-6"
+# Use a smaller / different-tier model as judge to avoid same-family bias
+# (the agent runs on Opus 4.7, so we judge with Haiku 4.5).
+JUDGE_MODEL = "claude-haiku-4-5-20251001"
 
 
 JUDGE_SYSTEM = """You evaluate a student-learning-assistant agent.

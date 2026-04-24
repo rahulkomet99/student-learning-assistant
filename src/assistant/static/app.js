@@ -19,6 +19,14 @@ let materialsCache = {};
 let messagesInner;
 let currentStudentId = null;
 let currentProfile = null;
+let activeAbort = null;        // AbortController for the in-flight /api/chat
+
+// --- inline SVG icons (16×16, currentColor) --------------------------------
+const ICON_SEND = `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M2 8L14 2L9 14L7 9L2 8Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`;
+const ICON_STOP = `<svg width="12" height="12" viewBox="0 0 12 12" xmlns="http://www.w3.org/2000/svg"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5" fill="currentColor"/></svg>`;
+const ICON_COPY = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>`;
+const ICON_CHECK = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8.5l3 3 7-7"/></svg>`;
+const ICON_REGEN = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M14 8A6 6 0 1 1 12.5 3.5"/><path d="M14 2.5v3.5h-3.5"/></svg>`;
 
 const TOOL_VERBS = {
   get_weak_topics:           { running: "Checking weak areas",             done: "Checked weak areas" },
@@ -205,7 +213,7 @@ function renderMarkdown(text) {
   // Pluck math blocks first so their content isn't escaped. Replace them
   // with numeric placeholders, splice them back after escape+markdown.
   const mathBlocks = [];
-  const placeholder = (i) => ` MATH${i} `;
+  const placeholder = (i) => `MATH${i}`;
   let withoutMath = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
     mathBlocks.push({ display: true, tex: expr.trim() });
     return placeholder(mathBlocks.length - 1);
@@ -274,7 +282,7 @@ function renderMarkdown(text) {
   let html = out.join("");
 
   // Splice math placeholders back, rendered by KaTeX.
-  html = html.replace(/ MATH(\d+) /g, (_, idx) => {
+  html = html.replace(/MATH(\d+)/g, (_, idx) => {
     const blk = mathBlocks[Number(idx)];
     if (!blk || typeof katex === "undefined") return esc(blk?.tex || "");
     try {
@@ -325,8 +333,71 @@ function addAssistantMessage() {
   content.appendChild(thinking);
   wrap.appendChild(content);
 
+  // Actions row — hidden until the `ready` class lands (after `done`).
+  const actions = document.createElement("div");
+  actions.className = "msg-actions";
+  actions.innerHTML = `
+    <button class="msg-action copy" title="Copy response" aria-label="Copy response">${ICON_COPY}</button>
+    <button class="msg-action regen" title="Regenerate response" aria-label="Regenerate response">${ICON_REGEN}</button>
+  `;
+  actions.querySelector(".copy").addEventListener("click", () => copyMessage(wrap, actions.querySelector(".copy")));
+  actions.querySelector(".regen").addEventListener("click", () => regenerateLast());
+  wrap.appendChild(actions);
+
   container.appendChild(wrap);
   return { wrap, tools, content, thinking };
+}
+
+async function copyMessage(wrap, btn) {
+  const raw = wrap.dataset.raw || "";
+  try {
+    await navigator.clipboard.writeText(raw);
+    const prev = btn.innerHTML;
+    btn.innerHTML = ICON_CHECK;
+    btn.classList.add("ok");
+    setTimeout(() => {
+      btn.innerHTML = prev;
+      btn.classList.remove("ok");
+    }, 1200);
+  } catch {
+    // Fallback for older browsers / non-https origins.
+    const ta = document.createElement("textarea");
+    ta.value = raw;
+    ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch { /* ignored */ }
+    document.body.removeChild(ta);
+  }
+}
+
+function regenerateLast() {
+  if (streaming) return;
+  // Find the latest user turn in history and drop the assistant reply that
+  // followed it; then replay the same message through sendMessage().
+  if (history.length < 2) return;
+  const lastAssistantIdx = history.length - 1;
+  const lastUserIdx = history.length - 2;
+  if (history[lastAssistantIdx].role !== "assistant" || history[lastUserIdx].role !== "user") return;
+  const lastUserText = history[lastUserIdx].content;
+  // Drop just the assistant reply (keep the user turn; we also keep the
+  // user message visible in the DOM — only the assistant message goes away).
+  history = history.slice(0, lastAssistantIdx);
+  const lastAssistantDom = messagesInner?.querySelectorAll(".message.assistant");
+  lastAssistantDom?.[lastAssistantDom.length - 1]?.remove();
+  sendMessage(lastUserText, { skipUserEcho: true });
+}
+
+function stopGeneration() {
+  activeAbort?.abort();
+}
+
+function setStreaming(on) {
+  streaming = on;
+  const inner = document.querySelector(".composer-inner");
+  inner?.classList.toggle("streaming", on);
+  sendBtn.innerHTML = on ? ICON_STOP : ICON_SEND;
+  sendBtn.setAttribute("aria-label", on ? "Stop generating" : "Send message");
 }
 
 function scrollToBottom() {
@@ -335,19 +406,21 @@ function scrollToBottom() {
 
 // --------------------------------------------------------------- streaming
 
-async function sendMessage(text) {
+async function sendMessage(text, opts = {}) {
   if (streaming || !text.trim()) return;
-  streaming = true;
-  sendBtn.disabled = true;
-  input.value = "";
-  input.style.height = "auto";
-
-  addUserMessage(text);
-  const { tools, content, thinking } = addAssistantMessage();
+  setStreaming(true);
+  if (!opts.skipUserEcho) {
+    input.value = "";
+    input.style.height = "auto";
+    input.closest(".composer-inner")?.classList.remove("has-text");
+    addUserMessage(text);
+  }
+  const { wrap, tools, content, thinking } = addAssistantMessage();
   scrollToBottom();
 
   let rawText = "";
   const toolLines = new Map();
+  activeAbort = new AbortController();
 
   try {
     const res = await fetch("/api/chat", {
@@ -358,6 +431,7 @@ async function sendMessage(text) {
         history,
         student_id: currentStudentId,
       }),
+      signal: activeAbort.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     if (!res.body) throw new Error("No response body");
@@ -380,10 +454,23 @@ async function sendMessage(text) {
       }
     }
   } catch (err) {
-    content.innerHTML = `<div class="error-block">Stream failed: ${esc(err.message)}</div>`;
+    if (err.name === "AbortError") {
+      // Graceful stop — keep whatever streamed so far, add a small note.
+      if (thinking.parentNode) thinking.remove();
+      const note = document.createElement("div");
+      note.className = "stop-note";
+      note.textContent = "— stopped by user";
+      content.appendChild(note);
+    } else {
+      content.innerHTML = `<div class="error-block">Stream failed: ${esc(err.message)}</div>`;
+    }
   } finally {
-    streaming = false;
+    activeAbort = null;
+    setStreaming(false);
     sendBtn.disabled = false;
+    // Mark this message as ready so the copy/regenerate actions can show.
+    wrap.dataset.raw = rawText;
+    wrap.classList.add("ready");
     input.focus();
   }
 
@@ -447,6 +534,11 @@ async function sendMessage(text) {
 
 form.addEventListener("submit", (e) => {
   e.preventDefault();
+  if (streaming) {
+    // Send button is a stop button while streaming.
+    stopGeneration();
+    return;
+  }
   sendMessage(input.value);
 });
 
@@ -460,6 +552,9 @@ input.addEventListener("keydown", (e) => {
 input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 200) + "px";
+  // Toggle has-text so the send button colours up only when there's input.
+  const inner = input.closest(".composer-inner");
+  if (inner) inner.classList.toggle("has-text", input.value.trim().length > 0);
 });
 
 studentSelect.addEventListener("change", async () => {
