@@ -47,6 +47,10 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatMessage] = []
     student_id: str | None = None
+    # Optional: resume an existing session so messages persist into the same
+    # `sessions` row instead of creating a new one. The sidebar uses this
+    # when the user clicks a past conversation.
+    session_id: str | None = None
 
 
 def _materials_index(store: Store) -> dict:
@@ -101,6 +105,44 @@ def create_app() -> FastAPI:
             "upcoming_tests": store.tests,
         })
 
+    @app.get("/api/sessions")
+    def list_sessions(
+        student_id: str = Query(default=DEFAULT_STUDENT_ID),
+        limit: int = Query(default=30, ge=1, le=100),
+    ) -> JSONResponse:
+        try:
+            store = Store.open(student_id)
+        except KeyError:
+            return JSONResponse({"error": f"unknown student: {student_id}"}, status_code=404)
+        return JSONResponse({"sessions": store.recent_sessions(limit=limit)})
+
+    @app.get("/api/sessions/{session_id}")
+    def get_session(
+        session_id: str,
+        student_id: str = Query(default=DEFAULT_STUDENT_ID),
+    ) -> JSONResponse:
+        try:
+            store = Store.open(student_id)
+        except KeyError:
+            return JSONResponse({"error": f"unknown student: {student_id}"}, status_code=404)
+        msgs = store.session_messages(session_id)
+        if msgs is None:
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        return JSONResponse({"session_id": session_id, "messages": msgs})
+
+    @app.delete("/api/sessions/{session_id}")
+    def delete_session(
+        session_id: str,
+        student_id: str = Query(default=DEFAULT_STUDENT_ID),
+    ) -> JSONResponse:
+        try:
+            store = Store.open(student_id)
+        except KeyError:
+            return JSONResponse({"error": f"unknown student: {student_id}"}, status_code=404)
+        if not store.delete_session(session_id):
+            return JSONResponse({"error": "session not found"}, status_code=404)
+        return JSONResponse({"ok": True})
+
     @app.get("/api/materials/{material_id}")
     def material_detail(material_id: str) -> JSONResponse:
         # Check across all cached students; material IDs are unique.
@@ -123,19 +165,32 @@ def create_app() -> FastAPI:
 
         agent = Agent(client=client, data=store, retriever=retriever)
         trace = TraceLogger()
-        store.start_session(trace.session_id)
+        # Reuse an existing session row when the client is resuming a past
+        # conversation; otherwise start a fresh one. We use the trace's
+        # session_id as the key in the latter case so the on-disk JSONL
+        # trace and the DB row share an identifier.
+        session_id = req.session_id or trace.session_id
+        store.start_session(session_id)
         history = [{"role": m.role, "content": m.content} for m in req.history]
 
         async def event_stream() -> AsyncIterator[bytes]:
-            yield _sse({"kind": "session", "session_id": trace.session_id, "student_id": student_id})
+            yield _sse({"kind": "session", "session_id": session_id, "student_id": student_id})
+            store.log_message(session_id, "user", req.message)
+            assistant_parts: list[str] = []
             try:
                 async for event in agent.run_async(req.message, history=history, trace=trace):
+                    if event.kind == "text_delta":
+                        assistant_parts.append(event.data.get("text", ""))
                     yield _sse(_event_to_sse(event, materials_by_id))
             except Exception as exc:  # pragma: no cover - surfaces to client
                 trace.error("server", f"{type(exc).__name__}: {exc}")
                 yield _sse({"kind": "error", "message": str(exc)})
             finally:
-                store.log_message(trace.session_id, "user", req.message)
+                # Persist the assistant turn too so the sidebar can replay
+                # the full conversation, not just the user side.
+                final_text = "".join(assistant_parts).strip()
+                if final_text:
+                    store.log_message(session_id, "assistant", final_text)
 
         headers = {
             "Cache-Control": "no-cache, no-transform",

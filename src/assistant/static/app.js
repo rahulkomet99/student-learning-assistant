@@ -9,6 +9,7 @@ const sendBtn = $("send");
 const studentCard = $("student-card");
 const studentSelect = $("student-select");
 const resetBtn = $("reset-btn");
+const sessionsListEl = $("sessions-list");
 const emptyEl = $("empty");
 const emptyTitleEl = $("empty-title");
 const emptySuggestionsEl = $("empty-suggestions");
@@ -19,6 +20,7 @@ let materialsCache = {};
 let messagesInner;
 let currentStudentId = null;
 let currentProfile = null;
+let currentSessionId = null;   // null = brand-new chat; set when resuming or after first reply
 let activeAbort = null;        // AbortController for the in-flight /api/chat
 
 // --- inline SVG icons (16×16, currentColor) --------------------------------
@@ -153,10 +155,124 @@ async function loadStudent(studentId) {
     `;
 
     renderEmptyState(p);
+    await loadSessions();
   } catch (err) {
     studentCard.innerHTML = `<div class="card-loading" style="color:var(--err)">Could not load student.<br><span style="font-size:11px">${esc(err.message)}</span></div>`;
     console.error("loadStudent failed:", err);
   }
+}
+
+// ---------------------------------------------------------------- sessions
+
+async function loadSessions() {
+  if (!currentStudentId) return;
+  try {
+    const res = await fetch(`/api/sessions?student_id=${encodeURIComponent(currentStudentId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    renderSessions(data.sessions || []);
+  } catch (err) {
+    sessionsListEl.innerHTML = `<div class="sessions-empty" style="color:var(--err)">${esc(err.message)}</div>`;
+  }
+}
+
+function renderSessions(sessions) {
+  if (!sessions.length) {
+    sessionsListEl.innerHTML = `<div class="sessions-empty">No past chats.</div>`;
+    return;
+  }
+  sessionsListEl.innerHTML = sessions.map(s => `
+    <div class="session-row${s.session_id === currentSessionId ? " active" : ""}" data-id="${esc(s.session_id)}">
+      <button class="session-pick" title="${esc(s.preview)}">
+        <div class="session-preview">${esc(s.preview)}</div>
+        <div class="session-meta">${esc(formatRelative(s.started_at))} · ${s.message_count} msg</div>
+      </button>
+      <button class="session-del" title="Delete conversation" aria-label="Delete">×</button>
+    </div>
+  `).join("");
+  for (const row of sessionsListEl.querySelectorAll(".session-row")) {
+    const id = row.dataset.id;
+    row.querySelector(".session-pick").addEventListener("click", () => loadSession(id));
+    row.querySelector(".session-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(id);
+    });
+  }
+}
+
+async function loadSession(sessionId) {
+  if (streaming) return;
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}?student_id=${encodeURIComponent(currentStudentId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    rehydrateConversation(sessionId, data.messages || []);
+  } catch (err) {
+    console.error("loadSession failed:", err);
+  }
+}
+
+async function deleteSession(sessionId) {
+  if (streaming) return;
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}?student_id=${encodeURIComponent(currentStudentId)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (sessionId === currentSessionId) resetChat();
+    await loadSessions();
+  } catch (err) {
+    console.error("deleteSession failed:", err);
+  }
+}
+
+function rehydrateConversation(sessionId, messages) {
+  resetChat({ refreshSessions: false });
+  currentSessionId = sessionId;
+  for (const m of messages) {
+    if (m.role === "user") {
+      addUserMessage(m.content);
+      history.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      const { wrap, content, thinking } = addAssistantMessage();
+      thinking.remove();
+      content.innerHTML = renderMarkdown(m.content);
+      wrap.dataset.raw = m.content;
+      wrap.classList.add("ready");
+      history.push({ role: "assistant", content: m.content });
+    }
+  }
+  renderSessions_highlightActive();
+  scrollToBottom();
+}
+
+function renderSessions_highlightActive() {
+  for (const row of sessionsListEl.querySelectorAll(".session-row")) {
+    row.classList.toggle("active", row.dataset.id === currentSessionId);
+  }
+}
+
+function formatRelative(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// Single source of truth for "wipe the chat and start fresh". Used by the
+// reset button, by student-switch, and by rehydration.
+function resetChat({ refreshSessions = true } = {}) {
+  history = [];
+  materialsCache = {};
+  currentSessionId = null;
+  messagesInner?.remove();
+  messagesInner = null;
+  if (!emptyEl.parentNode) messagesEl.appendChild(emptyEl);
+  if (refreshSessions) renderSessions_highlightActive();
 }
 
 function renderEmptyState(profile) {
@@ -430,6 +546,7 @@ async function sendMessage(text, opts = {}) {
         message: text,
         history,
         student_id: currentStudentId,
+        session_id: currentSessionId,
       }),
       signal: activeAbort.signal,
     });
@@ -477,6 +594,7 @@ async function sendMessage(text, opts = {}) {
   function handleEvent(evt) {
     switch (evt.kind) {
       case "session":
+        currentSessionId = evt.session_id;
         return;
 
       case "tool_use": {
@@ -518,6 +636,9 @@ async function sendMessage(text, opts = {}) {
           for (const c of evt.citations) materialsCache[c.material_id] = c;
           content.innerHTML = renderMarkdown(rawText);
         }
+        // Refresh the sidebar so the just-finished turn appears (or the
+        // existing row's count updates).
+        loadSessions();
         return;
       }
 
@@ -561,20 +682,10 @@ studentSelect.addEventListener("change", async () => {
   // Switching context mid-conversation would be confusing. Reset so the next
   // chat starts fresh against the new student.
   currentStudentId = studentSelect.value;
-  history = [];
-  materialsCache = {};
-  messagesInner?.remove();
-  messagesInner = null;
-  messagesEl.appendChild(emptyEl);
+  resetChat({ refreshSessions: false });
   await loadStudent(currentStudentId);
 });
 
-resetBtn.addEventListener("click", () => {
-  history = [];
-  materialsCache = {};
-  messagesInner?.remove();
-  messagesInner = null;
-  messagesEl.appendChild(emptyEl);
-});
+resetBtn.addEventListener("click", () => resetChat());
 
 input.focus();

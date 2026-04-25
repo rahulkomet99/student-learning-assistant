@@ -8,8 +8,9 @@ One FastAPI process. One SQLite file. Streaming chat UI with math rendering, cit
 
 ## Demo
 
-<!-- Record a ~30s screencast and drop it at docs/demo.gif -->
-![demo](docs/demo.gif)
+<video src="docs/demo.mp4" controls width="720"></video>
+
+[▶ docs/demo.mp4](docs/demo.mp4) — direct link if the inline player doesn't render in your viewer.
 
 Live captures of the assignment's 4 sample queries (tools called, citations, final answers) → [`evals/assignment_queries.md`](evals/assignment_queries.md).
 
@@ -190,3 +191,4 @@ The current tools cover **acquisition** (what to study, where to find it). A rea
 4. OpenTelemetry spans around each tool call + agent turn.
 5. Grow the eval set to ~50 cases with per-criterion histograms; nightly judge runs.
 6. Structured citation output via Claude's JSON mode so the UI renders citations authoritatively instead of regex-matching `[M###]`.
+7. Vector index — Voyage embeddings precomputed and persisted to a SQLite BLOB column on `materials`, fused into the existing RRF; swap to FAISS / Chroma behind `HybridRetriever` once the corpus outgrows in-memory cosine. Earns its keep on paraphrase recall, not at the current 30-doc scale.

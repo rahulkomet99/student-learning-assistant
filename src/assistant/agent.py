@@ -11,6 +11,11 @@ Key design choices:
     which we execute locally and feed back as tool_result blocks.
   - Events: the agent yields structured events (text deltas, tool_use,
     tool_result, done) so both CLI and SSE server can consume the same stream.
+  - One implementation, two surfaces: the per-turn streaming step is the only
+    truly sync/async-divergent piece. Everything else (state init, tool
+    dispatch, citation audit, done/error emission) is a shared sync helper
+    that both `run` and `run_async` drive — so the bulk of the loop lives in
+    exactly one place.
 """
 
 from __future__ import annotations
@@ -118,6 +123,19 @@ class AgentEvent:
 
 
 @dataclass
+class _RunState:
+    """Per-run mutable state shared between the streaming step and the
+    sync helpers. Exists so the (sync vs async) divergence is confined to
+    the streaming call itself — every other step takes this state and
+    yields events."""
+    messages: list[dict]
+    system: list[dict]
+    citations: list[str] = field(default_factory=list)
+    final_text_parts: list[str] = field(default_factory=list)
+    trace: TraceLogger | None = None
+
+
+@dataclass
 class Agent:
     """Runs the tool-use loop against Claude.
 
@@ -163,7 +181,107 @@ class Agent:
             },
         ]
 
-    # ------------------------------------------------------------------ main
+    # ------------------------------------------------------ shared helpers
+
+    def _init_state(
+        self,
+        user_message: str,
+        history: list[dict] | None,
+        trace: TraceLogger | None,
+    ) -> _RunState:
+        if trace:
+            trace.user_message(user_message)
+        messages = _wrap_history(list(history or [])) + [
+            {"role": "user", "content": _wrap_user(user_message)}
+        ]
+        return _RunState(
+            messages=messages,
+            system=self._system_blocks(),
+            trace=trace,
+        )
+
+    def _finalize(
+        self, state: _RunState, stop_reason: str, usage: dict
+    ) -> Iterator[AgentEvent]:
+        final_text = "".join(state.final_text_parts)
+        _audit_citations(final_text, state.citations, state.trace)
+        if state.trace:
+            state.trace.assistant_message(final_text, usage=usage)
+        yield AgentEvent(
+            kind="done",
+            data={
+                "citations": state.citations,
+                "usage": usage,
+                "stop_reason": stop_reason,
+            },
+        )
+
+    def _process_tool_calls(
+        self, state: _RunState, assistant_content: list[dict]
+    ) -> Iterator[AgentEvent]:
+        state.messages.append({"role": "assistant", "content": assistant_content})
+        tool_result_blocks: list[dict] = []
+        for block in assistant_content:
+            if block.get("type") != "tool_use":
+                continue
+            name = block["name"]
+            inputs = block.get("input") or {}
+            if state.trace:
+                state.trace.tool_use(name, inputs)
+            yield AgentEvent(
+                kind="tool_use",
+                data={"id": block["id"], "name": name, "input": inputs},
+            )
+            result = dispatch(self.tool_ctx, name, inputs)
+            if state.trace:
+                state.trace.tool_result(name, result)
+            for mid in collect_citations([result]):
+                if mid not in state.citations:
+                    state.citations.append(mid)
+            yield AgentEvent(
+                kind="tool_result",
+                data={"id": block["id"], "name": name, "result": result},
+            )
+            tool_result_blocks.append({
+                "type": "tool_result",
+                "tool_use_id": block["id"],
+                "content": json.dumps(result, default=str),
+            })
+        state.messages.append({"role": "user", "content": tool_result_blocks})
+
+    def _exhaust(self, state: _RunState) -> Iterator[AgentEvent]:
+        if state.trace:
+            state.trace.error("agent", f"max_turns ({MAX_TURNS}) exceeded")
+        yield AgentEvent(
+            kind="error",
+            data={"message": f"Agent exceeded max_turns ({MAX_TURNS}) without finishing."},
+        )
+
+    # -------------------------------------------------------- sync streaming
+
+    def _stream_once_sync(
+        self, state: _RunState
+    ) -> Iterator[AgentEvent]:
+        """Run one streaming turn; yield text deltas, return
+        (assistant_content, stop_reason, usage)."""
+        with self.client.messages.stream(
+            model=self.model,
+            max_tokens=MAX_TOKENS,
+            system=state.system,
+            tools=TOOL_SCHEMAS,
+            messages=state.messages,
+        ) as stream:
+            for event in stream:
+                if event.type == "content_block_delta" and event.delta.type == "text_delta":
+                    text = event.delta.text
+                    state.final_text_parts.append(text)
+                    yield AgentEvent(kind="text_delta", data={"text": text})
+            final_message = stream.get_final_message()
+
+        assistant_content = [_block_to_dict(b) for b in final_message.content]
+        return assistant_content, final_message.stop_reason, _extract_usage(final_message)
+
+    # ------------------------------------------------------------------ run
 
     def run(
         self,
@@ -171,106 +289,19 @@ class Agent:
         history: list[dict] | None = None,
         trace: TraceLogger | None = None,
     ) -> Iterator[AgentEvent]:
-        """Yield structured events while the agent runs to completion."""
-        if trace:
-            trace.user_message(user_message)
-
-        messages: list[dict] = _wrap_history(list(history or [])) + [
-            {"role": "user", "content": _wrap_user(user_message)}
-        ]
-        system = self._system_blocks()
-        citations: list[str] = []
-        final_text_parts: list[str] = []
+        """Sync streaming generator. Used by the CLI and tests."""
+        state = self._init_state(user_message, history, trace)
 
         for _turn in range(MAX_TURNS):
-            assistant_content, stop_reason, usage = yield from self._stream_once(
-                messages, system, final_text_parts
-            )
-
+            assistant_content, stop_reason, _usage = yield from self._stream_once_sync(state)
             if stop_reason != "tool_use":
-                _audit_citations("".join(final_text_parts), citations, trace)
-                if trace:
-                    trace.assistant_message("".join(final_text_parts), usage=usage)
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "citations": citations,
-                        "usage": usage,
-                        "stop_reason": stop_reason,
-                    },
-                )
+                yield from self._finalize(state, stop_reason, _usage)
                 return
+            yield from self._process_tool_calls(state, assistant_content)
 
-            messages.append({"role": "assistant", "content": assistant_content})
+        yield from self._exhaust(state)
 
-            tool_result_blocks: list[dict] = []
-            for block in assistant_content:
-                if block.get("type") != "tool_use":
-                    continue
-                name = block["name"]
-                inputs = block.get("input") or {}
-                if trace:
-                    trace.tool_use(name, inputs)
-                yield AgentEvent(
-                    kind="tool_use",
-                    data={"id": block["id"], "name": name, "input": inputs},
-                )
-
-                result = dispatch(self.tool_ctx, name, inputs)
-                if trace:
-                    trace.tool_result(name, result)
-                for mid in collect_citations([result]):
-                    if mid not in citations:
-                        citations.append(mid)
-                yield AgentEvent(
-                    kind="tool_result",
-                    data={"id": block["id"], "name": name, "result": result},
-                )
-                tool_result_blocks.append({
-                    "type": "tool_result",
-                    "tool_use_id": block["id"],
-                    "content": json.dumps(result, default=str),
-                })
-
-            messages.append({"role": "user", "content": tool_result_blocks})
-
-        # Exhausted max_turns without a final answer.
-        if trace:
-            trace.error("agent", f"max_turns ({MAX_TURNS}) exceeded")
-        yield AgentEvent(
-            kind="error",
-            data={"message": f"Agent exceeded max_turns ({MAX_TURNS}) without finishing."},
-        )
-
-    # -------------------------------------------------------------- streaming
-
-    def _stream_once(
-        self,
-        messages: list[dict],
-        system: list[dict],
-        final_text_parts: list[str],
-    ) -> Iterator[AgentEvent]:
-        """Stream one API call. Yields text_delta events, returns
-        (assistant_content_blocks, stop_reason, usage)."""
-
-        with self.client.messages.stream(
-            model=self.model,
-            max_tokens=MAX_TOKENS,
-            system=system,
-            tools=TOOL_SCHEMAS,
-            messages=messages,
-        ) as stream:
-            for event in stream:
-                if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                    text = event.delta.text
-                    final_text_parts.append(text)
-                    yield AgentEvent(kind="text_delta", data={"text": text})
-            final_message = stream.get_final_message()
-
-        assistant_content = [_block_to_dict(b) for b in final_message.content]
-        return assistant_content, final_message.stop_reason, _extract_usage(final_message)
-
-    # --------------------------------------------------------- async variant
+    # ------------------------------------------------------------ run_async
 
     async def run_async(
         self,
@@ -278,29 +309,20 @@ class Agent:
         history: list[dict] | None = None,
         trace: TraceLogger | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        """Async equivalent of `run`. Use with an `AsyncAnthropic` client so
-        token deltas flush to the SSE socket immediately instead of blocking
-        the event loop inside a sync generator."""
+        """Async streaming generator. Used by the FastAPI SSE endpoint so
+        token deltas flush to the socket without blocking the event loop."""
         if not isinstance(self.client, AsyncAnthropic):
             raise TypeError("run_async requires an AsyncAnthropic client")
 
-        if trace:
-            trace.user_message(user_message)
-
-        messages: list[dict] = _wrap_history(list(history or [])) + [
-            {"role": "user", "content": _wrap_user(user_message)}
-        ]
-        system = self._system_blocks()
-        citations: list[str] = []
-        final_text_parts: list[str] = []
+        state = self._init_state(user_message, history, trace)
 
         for _turn in range(MAX_TURNS):
             async with self.client.messages.stream(
                 model=self.model,
                 max_tokens=MAX_TOKENS,
-                system=system,
+                system=state.system,
                 tools=TOOL_SCHEMAS,
-                messages=messages,
+                messages=state.messages,
             ) as stream:
                 async for event in stream:
                     if (
@@ -308,7 +330,7 @@ class Agent:
                         and event.delta.type == "text_delta"
                     ):
                         text = event.delta.text
-                        final_text_parts.append(text)
+                        state.final_text_parts.append(text)
                         yield AgentEvent(kind="text_delta", data={"text": text})
                 final_message = await stream.get_final_message()
 
@@ -317,57 +339,15 @@ class Agent:
             usage = _extract_usage(final_message)
 
             if stop_reason != "tool_use":
-                _audit_citations("".join(final_text_parts), citations, trace)
-                if trace:
-                    trace.assistant_message("".join(final_text_parts), usage=usage)
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "citations": citations,
-                        "usage": usage,
-                        "stop_reason": stop_reason,
-                    },
-                )
+                for evt in self._finalize(state, stop_reason, usage):
+                    yield evt
                 return
 
-            messages.append({"role": "assistant", "content": assistant_content})
+            for evt in self._process_tool_calls(state, assistant_content):
+                yield evt
 
-            tool_result_blocks: list[dict] = []
-            for block in assistant_content:
-                if block.get("type") != "tool_use":
-                    continue
-                name = block["name"]
-                inputs = block.get("input") or {}
-                if trace:
-                    trace.tool_use(name, inputs)
-                yield AgentEvent(
-                    kind="tool_use",
-                    data={"id": block["id"], "name": name, "input": inputs},
-                )
-                result = dispatch(self.tool_ctx, name, inputs)
-                if trace:
-                    trace.tool_result(name, result)
-                for mid in collect_citations([result]):
-                    if mid not in citations:
-                        citations.append(mid)
-                yield AgentEvent(
-                    kind="tool_result",
-                    data={"id": block["id"], "name": name, "result": result},
-                )
-                tool_result_blocks.append({
-                    "type": "tool_result",
-                    "tool_use_id": block["id"],
-                    "content": json.dumps(result, default=str),
-                })
-
-            messages.append({"role": "user", "content": tool_result_blocks})
-
-        if trace:
-            trace.error("agent", f"max_turns ({MAX_TURNS}) exceeded")
-        yield AgentEvent(
-            kind="error",
-            data={"message": f"Agent exceeded max_turns ({MAX_TURNS}) without finishing."},
-        )
+        for evt in self._exhaust(state):
+            yield evt
 
 
 def _audit_citations(final_text: str, surfaced_ids: list[str], trace: TraceLogger | None) -> None:
@@ -413,5 +393,4 @@ def _block_to_dict(block: Any) -> dict:
             "name": block.name,
             "input": block.input,
         }
-    # Fallback: preserve unknown types verbatim.
     return block.model_dump() if hasattr(block, "model_dump") else {"type": block.type}

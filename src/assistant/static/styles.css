@@ -200,6 +200,84 @@ body {
   border-color: var(--border);
 }
 
+/* Past conversations list — Claude-style */
+.sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.sessions-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+  font-weight: 500;
+  padding: 0 4px;
+}
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  margin: 0 -2px;
+}
+.sessions-empty {
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.session-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  position: relative;
+}
+.session-row:hover { background: var(--bg-elev); }
+.session-row.active { background: var(--bg-elev); }
+.session-pick {
+  flex: 1;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-preview {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-meta {
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.session-row.active .session-preview { color: var(--accent); }
+.session-del {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 8px;
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+  font-family: inherit;
+}
+.session-row:hover .session-del { opacity: 1; }
+.session-del:hover { color: var(--err); }
+
 .sidebar-foot {
   margin-top: auto;
   padding: 8px 4px;

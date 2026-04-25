@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .data import Material
-from .schema import connect, init_db, is_empty, DEFAULT_DB_PATH
+from .schema import init_db, is_empty, DEFAULT_DB_PATH
 
 
 # ---------------------------------------------------------------- Store
@@ -199,6 +199,65 @@ class Store:
         )
         self.conn.commit()
 
+    def recent_sessions(self, limit: int = 30) -> list[dict]:
+        """Sessions for this student, newest first, with a one-line preview
+        of the first user turn so the sidebar can show a recognisable label."""
+        rows = self.conn.execute(
+            """
+            SELECT s.id, s.started_at,
+                   (SELECT m.content
+                      FROM messages m
+                     WHERE m.session_id = s.id AND m.role = 'user'
+                     ORDER BY m.id ASC LIMIT 1) AS first_user_message,
+                   (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count
+            FROM sessions s
+            WHERE s.student_id = ?
+            ORDER BY s.started_at DESC
+            LIMIT ?
+            """,
+            (self.student_id, limit),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            if not r["first_user_message"]:
+                continue  # session never produced a turn — skip
+            out.append({
+                "session_id": r["id"],
+                "started_at": r["started_at"],
+                "preview": _preview(r["first_user_message"]),
+                "message_count": r["message_count"],
+            })
+        return out
+
+    def session_messages(self, session_id: str) -> list[dict] | None:
+        """Return ordered (role, content) messages for a session owned by this
+        student, or None if the session doesn't belong to them."""
+        own = self.conn.execute(
+            "SELECT id FROM sessions WHERE id = ? AND student_id = ?",
+            (session_id, self.student_id),
+        ).fetchone()
+        if own is None:
+            return None
+        rows = self.conn.execute(
+            """
+            SELECT role, content, created_at FROM messages
+            WHERE session_id = ?
+            ORDER BY id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_session(self, session_id: str) -> bool:
+        """Delete a session and its messages, scoped to this student. Returns
+        True if a row was deleted."""
+        cur = self.conn.execute(
+            "DELETE FROM sessions WHERE id = ? AND student_id = ?",
+            (session_id, self.student_id),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
     # ------------------------------------------------------- listing
 
     @staticmethod
@@ -208,6 +267,12 @@ class Store:
             "SELECT id, name, grade, board, source FROM students ORDER BY source, id"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def _preview(text: str, n: int = 80) -> str:
+    """Single-line preview of a message for the sidebar list."""
+    text = (text or "").strip().replace("\n", " ")
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
 
 
 def ensure_seeded(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
