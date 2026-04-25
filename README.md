@@ -8,9 +8,9 @@ One FastAPI process. One SQLite file. Streaming chat UI with math rendering, cit
 
 ## Demo
 
-<video src="docs/demo.mp4" controls width="720"></video>
+https://github.com/rahulkomet99/student-learning-assistant/raw/main/demo.mp4
 
-[▶ docs/demo.mp4](docs/demo.mp4) — direct link if the inline player doesn't render in your viewer.
+[▶ demo.mp4](demo.mp4) — direct link if the inline player doesn't render in your viewer.
 
 Live captures of the assignment's 4 sample queries (tools called, citations, final answers) → [`evals/assignment_queries.md`](evals/assignment_queries.md).
 
